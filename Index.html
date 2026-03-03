@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Reservasi Ruang GKT3</title>
+    <!-- Dependencies -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.8);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .active-nav {
+            border-bottom: 2px solid #2563eb;
+            color: #2563eb;
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .schedule-card {
+            border-left: 5px solid #cbd5e1;
+            transition: all 0.3s ease;
+        }
+        .session-latihan { border-left-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        .session-gladikotor { border-left-color: #f59e0b !important; background-color: #fffbeb !important; }
+        .session-gladibersih { border-left-color: #10b981 !important; background-color: #ecfdf5 !important; }
+        .session-puncak { border-left-color: #ef4444 !important; background-color: #fef2f2 !important; }
+        .session-rapat { border-left-color: #a4b246 !important; background-color: #f8f9ec !important; }
+        .session-lainnya { border-left-color: #8b5cf6 !important; background-color: #f5f3ff !important; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+        
+        .tab-active { background-color: #2563eb; color: white; border-color: #2563eb; }
+        .tab-inactive { background-color: white; color: #64748b; border: 1px solid #e2e8f0; }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans">
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600 mb-4"></div>
+        <p id="loadingText" class="font-semibold text-blue-600">Memproses...</p>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <div class="bg-blue-600 p-2 rounded-lg text-white">
+                    <i class="fas fa-building-circle-check"></i>
+                </div>
+                <span class="font-bold text-xl tracking-tight text-slate-800">Reservasi Ruang <span class="text-blue-600">GKT3</span></span>
+            </div>
+            <div id="navLinks" class="flex gap-2"></div>
+        </div>
+    </nav>
+
+    <main class="max-w-6xl mx-auto p-4 mt-6">
+        <div id="appView"></div>
+    </main>
+
+    <footer class="text-center mt-12 mb-8">
+        <small class="text-slate-400">
+            &copy; 2026 Sistem Reservasi & Manajemen Ruangan GKT3.
+        </small>
+    </footer>
+
+    <script>
+        /**
+         * STATE MANAGEMENT
+         */
+        var user = null;
+        var view = 'form';
+        var allData = []; 
+        var dashboardStats = { today: 0, week: 0, month: 0 };
+        var daftarRuangan = ['Aula Utama', 'Ruang Rapat 1', 'Lab Komputer', 'Gedung Serbaguna'];
+        var sessionCount = 0;
+        
+        var adminFilter = 'all'; 
+        var adminSearch = '';
+        var currentPage = 1;
+        var itemsPerPage = 20;
+
+        var NAMA_HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+        /**
+         * UTILITY FUNCTIONS
+         */
+        function formatWaktuDaftar(dateStr) {
+            var dt = new Date(dateStr.replace(' ', 'T'));
+            if (isNaN(dt.getTime())) return dateStr;
+            var hari = NAMA_HARI[dt.getDay()];
+            var parts = dateStr.split(' ');
+            var tanggal = parts[0];
+            var jam = parts[1] ? parts[1].substring(0, 5) : '';
+            return hari + ', ' + tanggal + ' <span class="text-[10px] text-slate-400 font-bold block">' + jam + '</span>';
+        }
+
+        // MODIFIKASI: Fungsi untuk memformat tanggal LENGKAP dengan HARI
+        function formatTanggalDaftar(str) {
+            // Menghilangkan 'T' jika format dari input datetime-local
+            const cleanStr = str.replace('T', ' ');
+            const d = new Date(cleanStr);
+            if(isNaN(d)) return cleanStr;
+            
+            const hari = NAMA_HARI[d.getDay()];
+            const tgl = d.getDate();
+            const bln = d.toLocaleString('id-ID', { month: 'short' });
+            const thn = d.getFullYear();
+            const jam = d.getHours().toString().padStart(2, '0');
+            const mnt = d.getMinutes().toString().padStart(2, '0');
+            
+            return `${hari}, ${tgl} ${bln} ${thn} ` + ' <span class="text-[10px] text-slate-400 font-bold block">' + `${jam}:${mnt}` + '</span>';
+        }
+
+        /**
+         * CORE ENGINE
+         */
+        function initApp() {
+            startLoading('Sinkronisasi...');
+            var savedRooms = localStorage.getItem('simru_rooms');
+            if(savedRooms) daftarRuangan = JSON.parse(savedRooms);
+
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(rooms) {
+                    if(rooms && rooms.length > 0) {
+                        daftarRuangan = rooms;
+                        localStorage.setItem('simru_rooms', JSON.stringify(rooms));
+                    }
+                    checkLoginState();
+                    endLoading();
+                }).getRuangan();
+            } else {
+                generateMockData();
+                setTimeout(function() { checkLoginState(); endLoading(); }, 800);
+            }
+        }
+
+        function checkLoginState() {
+            var saved = localStorage.getItem('simru_session');
+            if (saved) {
+                user = JSON.parse(saved);
+                navigateTo('admin_dashboard');
+            } else {
+                navigateTo('form');
+            }
+        }
+
+        function navigateTo(target) {
+            view = target;
+            if(user) renderAdminNav(); else renderPublicNav();
+
+            switch(target) {
+                case 'form': renderFormView(); break;
+                case 'public_status': fetchPublicData(); break;
+                case 'login': renderLoginView(); break;
+                case 'admin_dashboard': fetchAdminData(); break;
+                case 'admin_rooms': renderRoomManagement(); break;
+            }
+        }
+
+        function fetchPublicData() {
+            startLoading('Mengambil data...');
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(res) {
+                    allData = res.data || [];
+                    renderPublicStatusView();
+                    endLoading();
+                }).getDataAdmin();
+            } else { renderPublicStatusView(); endLoading(); }
+        }
+
+        function fetchAdminData() {
+            startLoading('Memuat Dashboard...');
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(res) {
+                    allData = res.data || [];
+                    dashboardStats = res.stats || { today: 0, week: 0, month: 0 };
+                    renderAdminDashboard();
+                    endLoading();
+                }).getDataAdmin();
+            } else { 
+                dashboardStats = { today: 1, week: 1, month: 1 };
+                renderAdminDashboard(); 
+                endLoading(); 
+            }
+        }
+
+        function renderFormView() {
+            sessionCount = 0;
+            document.getElementById('appView').innerHTML = 
+                '<div class="bg-white rounded-2xl shadow-xl overflow-hidden animate-fade-in max-w-4xl mx-auto">' +
+                    '<div class="bg-blue-600 p-6 text-white text-center">' +
+                        '<h2 class="text-2xl font-bold">Form Peminjaman Ruangan</h2>' +
+                        '<p class="opacity-80 text-sm">Silakan isi detail permohonan Anda di bawah ini</p>' +
+                    '</div>' +
+                    '<form onsubmit="handleFormSubmit(event)" class="p-8 space-y-8">' +
+                        '<div class="space-y-4">' +
+                            '<h3 class="font-bold text-lg border-b pb-2 flex items-center gap-2 text-slate-800">' +
+                                '<i class="fas fa-user-circle text-blue-600"></i> Informasi Peminjam' +
+                            '</h3>' +
+                            '<div class="grid md:grid-cols-2 gap-6">' +
+                                '<div>' +
+                                    '<label class="block text-sm font-semibold mb-2">Nama Peminjam *</label>' +
+                                    '<input type="text" name="nama" required class="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Nama Lengkap">' +
+                                '</div>' +
+                                '<div>' +
+                                    '<label class="block text-sm font-semibold mb-2">WhatsApp *</label>' +
+                                    '<div class="flex">' +
+                                        '<span class="inline-flex items-center px-4 rounded-l-xl border border-r-0 bg-slate-100 text-slate-500 font-bold text-sm">62</span>' +
+                                        '<input type="number" name="nohp" placeholder="8123456..." required class="flex-1 p-3 border rounded-r-xl focus:ring-2 focus:ring-blue-500 outline-none">' +
+                                    '</div>' +
+                                '</div>' +
+                            '</div>' +
+                            '<div>' +
+                                '<label class="block text-sm font-semibold mb-2">Nama Kegiatan *</label>' +
+                                '<input type="text" name="kegiatan" required class="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Contoh: Rapat Koordinasi, Latihan Musik">' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="space-y-4">' +
+                            '<div class="flex justify-between items-center border-b pb-2">' +
+                                '<h3 class="font-bold text-lg flex items-center gap-2 text-slate-800">' +
+                                    '<i class="fas fa-calendar-alt text-blue-600"></i> Rincian Jadwal & Ruangan' +
+                                '</h3>' +
+                                '<button type="button" onclick="addSession()" class="text-xs bg-blue-600 text-white font-bold px-4 py-2 rounded-xl hover:bg-blue-700 transition-all shadow-md shadow-blue-100">' +
+                                    '<i class="fas fa-plus mr-1"></i> TAMBAH SESI' +
+                                '</button>' +
+                            '</div>' +
+                            '<div id="sessionContainer" class="space-y-6"></div>' +
+                        '</div>' +
+                        '<div class="pt-4">' +
+                            '<button type="submit" class="w-full bg-blue-600 text-white font-bold p-4 rounded-2xl hover:bg-blue-700 shadow-xl shadow-blue-100 text-lg transform transition-transform active:scale-95"><i class="fas fa-paper-plane mr-2"></i>' +
+                                'KIRIM PERMOHONAN' +
+                            '</button>' +
+                        '</div>' +
+                    '</form>' +
+                '</div>';
+            addSession();
+        }
+
+        function addSession() {
+            sessionCount++;
+            var roomOptions = daftarRuangan.sort().map(function(r) { return '<option value="'+r+'">'+r+'</option>'; }).join('');
+            var container = document.getElementById('sessionContainer');
+            var sessionDiv = document.createElement('div');
+            sessionDiv.id = 'session_' + sessionCount;
+            sessionDiv.className = "schedule-card p-6 rounded-2xl border border-slate-200 shadow-sm relative animate-fade-in bg-white";
+
+            // Logika untuk mengatur tanggal minimal (H+3)
+            var now = new Date();
+            var minDate = new Date(now.setDate(now.getDate() + 3));
+            var year = minDate.getFullYear();
+            var month = (minDate.getMonth() + 1).toString().padStart(2, '0');
+            var day = minDate.getDate().toString().padStart(2, '0');
+            var minDateTime = `${year}-${month}-${day}T08:00`; // Default ke jam 8 pagi
+            
+            sessionDiv.innerHTML = 
+                (sessionCount > 1 ? '<button type="button" onclick="removeSession('+sessionCount+')" class="absolute top-4 right-4 text-slate-300 hover:text-red-500 transition-colors z-10"><i class="fas fa-times-circle text-lg"></i></button>' : '') +
+                '<div class="space-y-4">' +
+                    '<div class="grid md:grid-cols-2 gap-4">' +
+                        '<div>' +
+                            '<label class="block text-[10px] font-bold uppercase text-slate-500 mb-1.5 tracking-wider">Kategori Sesi *</label>' +
+                            '<select name="session_kategori_'+sessionCount+'" onchange="updateSessionColor(this)" required class="w-full p-3 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white font-semibold">' +
+                                '<option value="">-- Pilih Kategori --</option>' +
+                                '<option value="Sesi Latihan">Latihan (Ibadah / Musik / PaDus)</option>' +
+                                '<option value="Gladi Kotor">Gladi Kotor</option>' +
+                                '<option value="Gladi Bersih">Gladi Bersih</option>' +
+                                '<option value="Puncak Acara">Puncak Acara</option>' +
+                                '<option value="Rapat">Rapat</option>' +
+                                '<option value="Lainnya">Insidentil/Lainnya</option>' +
+                            '</select>' +
+                        '</div>' +
+                        '<div>' +
+                            '<label class="block text-[10px] font-bold uppercase text-slate-500 mb-1.5 tracking-wider">Ruangan *</label>' +
+                            '<select name="session_ruangan_'+sessionCount+'" required class="w-full p-3 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">' +
+                                '<option value="">-- Pilih Ruangan --</option>' +
+                                roomOptions +
+                            '</select>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="grid md:grid-cols-2 gap-4">' +
+                        '<div>' +
+                            '<label class="block text-[10px] font-bold uppercase text-slate-500 mb-1.5 tracking-wider">Waktu Mulai * (Min H+3)</label>' +
+                            '<input type="datetime-local" name="session_waktu_'+sessionCount+'" min="'+minDateTime+'" value="'+minDateTime+'" required class="w-full p-3 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">' +
+                        '</div>' +
+                        '<div>' +
+                            '<label class="block text-[10px] font-bold uppercase text-slate-500 mb-1.5 tracking-wider">Lama Pinjam *</label>' +
+                            '<div class="flex">' +
+                                '<input type="number" name="session_lama_'+sessionCount+'" min="1" step="0.5" required placeholder="1" class="flex-1 p-3 border rounded-l-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">' +
+                                '<span class="inline-flex items-center px-4 rounded-r-xl border border-l-0 bg-slate-100 text-slate-500 font-bold text-xs">JAM</span>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="pt-2">' +
+                        '<label class="block text-[10px] font-bold uppercase text-slate-500 mb-1.5 tracking-wider">Kebutuhan Peralatan (Opsional)</label>' +
+                        '<textarea name="session_peralatan_'+sessionCount+'" rows="2" class="w-full p-3 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" placeholder="Contoh: 2 mic, 1 meja, dlsb"></textarea>' +
+                    '</div>' +
+                '</div>';
+            container.appendChild(sessionDiv);
+        }
+
+        function removeSession(id) { 
+            var el = document.getElementById('session_' + id);
+            if(el) el.remove(); 
+        }
+        
+        function updateSessionColor(selectEl) {
+            var card = selectEl.closest('.schedule-card');
+            var val = selectEl.value.toLowerCase();
+            card.classList.remove('session-latihan', 'session-gladikotor', 'session-gladibersih', 'session-puncak', 'session-rapat', 'session-lainnya');
+            if(val.indexOf('latihan') !== -1) card.classList.add('session-latihan');
+            else if(val.indexOf('kotor') !== -1) card.classList.add('session-gladikotor');
+            else if(val.indexOf('bersih') !== -1) card.classList.add('session-gladibersih');
+            else if(val.indexOf('puncak') !== -1) card.classList.add('session-puncak');
+            else if(val.indexOf('rapat') !== -1) card.classList.add('session-rapat');
+            else if(val !== "") card.classList.add('session-lainnya');
+        }
+
+        function renderAdminDashboard() {
+            var html = 
+                '<div class="space-y-8 animate-fade-in">' +
+                    '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">' +
+                        '<div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">' +
+                            '<div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Hari Ini</div>' +
+                            '<div class="text-3xl font-black text-blue-600">' + dashboardStats.today + '</div>' +
+                        '</div>' +
+                        '<div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">' +
+                            '<div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Minggu Ini</div>' +
+                            '<div class="text-3xl font-black text-emerald-500">' + dashboardStats.week + '</div>' +
+                        '</div>' +
+                        '<div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">' +
+                            '<div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Bulan Ini</div>' +
+                            '<div class="text-3xl font-black text-amber-500">' + dashboardStats.month + '</div>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">' +
+                        '<h2 class="text-xl font-bold text-slate-800">Riwayat Permohonan</h2>' +
+                        '<div class="flex gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0 no-scrollbar">' +
+                            '<button onclick="setAdminFilter(\'all\')" class="px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ' + (adminFilter==='all'?'tab-active':'tab-inactive') + '">SEMUA</button>' +
+                            '<button onclick="setAdminFilter(\'today\')" class="px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ' + (adminFilter==='today'?'tab-active':'tab-inactive') + '">HARI INI</button>' +
+                            '<button onclick="setAdminFilter(\'week\')" class="px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ' + (adminFilter==='week'?'tab-active':'tab-inactive') + '">MINGGU INI</button>' +
+                            '<button onclick="setAdminFilter(\'month\')" class="px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ' + (adminFilter==='month'?'tab-active':'tab-inactive') + '">BULAN INI</button>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">' +
+                        '<div class="p-5 border-b flex flex-col md:flex-row gap-4">' +
+                             '<div class="relative flex-1">' +
+                                '<i class="fas fa-search absolute left-4 top-3.5 text-slate-400 text-sm"></i>' +
+                                '<input type="text" onkeyup="setAdminSearch(this.value)" value="' + adminSearch + '" placeholder="Cari pemohon, kegiatan, atau ruangan..." class="w-full pl-11 pr-4 py-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50 border-transparent">' +
+                             '</div>' +
+                             '<button onclick="navigateTo(\'admin_rooms\')" class="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-bold shadow-md shadow-blue-100 flex items-center justify-center gap-2">' +
+                                '<i class="fas fa-cog"></i> KELOLA RUANGAN' +
+                             '</button>' +
+                        '</div>' +
+                        '<div class="overflow-x-auto">' +
+                            '<table class="w-full text-left border-collapse min-w-[800px]">' +
+                                '<thead class="bg-slate-50 border-b">' +
+                                    '<tr>' +
+                                        '<th class="p-5 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Waktu Daftar</th>' +
+                                        '<th class="p-5 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Nama Pemohon</th>' +
+                                        '<th class="p-5 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Nama Kegiatan</th>' +
+                                        '<th class="p-5 text-center text-[11px] font-bold text-slate-400 uppercase tracking-widest">Kontak</th>' +
+                                        '<th class="p-5 text-center text-[11px] font-bold text-slate-400 uppercase tracking-widest">Aksi</th>' +
+                                    '</tr>' +
+                                '</thead>' +
+                                '<tbody id="adminTableBody">' + renderAdminRows() + '</tbody>' +
+                            '</table>' +
+                        '</div>' +
+                        '<div id="paginationContainer" class="p-5 bg-slate-50 border-t flex justify-between items-center"></div>' +
+                    '</div>' +
+                '</div>';
+            document.getElementById('appView').innerHTML = html;
+            renderPagination();
+        }
+
+        function renderAdminRows() {
+            var data = getFilteredAdminData();
+            var paginated = data.slice((currentPage-1)*itemsPerPage, currentPage*itemsPerPage);
+            
+            if (paginated.length === 0) return '<tr><td colspan="5" class="p-20 text-center text-slate-400 italic">Tidak ada data yang cocok dengan filter.</td></tr>';
+            
+            return paginated.map(function(row) {
+                var waLink = 'https://wa.me/' + row.nohp + '?text=' + encodeURIComponent('Halo ' + row.namapeminjam + ', saya admin GKT3...');
+                return '<tr class="border-b text-sm hover:bg-slate-50/50 transition-colors">' +
+                        '<td class="p-5 whitespace-nowrap">' +
+                            '<div class="font-bold text-slate-700">' + formatTanggalDaftar(row.timestamp) + '</div>' +
+                        '</td>' +
+                        '<td class="p-5">' +
+                            '<div class="font-bold text-slate-800">' + row.namapeminjam + '</div>' +
+                        '</td>' +
+                        '<td class="p-5">' +
+                            '<div class="text-blue-600 font-bold uppercase text-xs line-clamp-1">' + row.kegiatan + '</div>' +
+                            '<div class="text-[10px] text-slate-400 italic">' + row.ruangan + '</div>' +
+                        '</td>' +
+                        '<td class="p-5 text-center">' +
+                            '<a href="' + waLink + '" target="_blank" class="inline-flex items-center justify-center w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full hover:bg-emerald-500 hover:text-white transition-all">' +
+                                '<i class="fab fa-whatsapp"></i>' +
+                            '</a>' +
+                        '</td>' +
+                        '<td class="p-5 text-center whitespace-nowrap">' +
+                            '<button onclick=\'viewDetailModal(' + JSON.stringify(row) + ', true)\' class="bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all shadow-sm">' +
+                                'DETAIL' +
+                            '</button>' +
+                        '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        /**
+         * UTILITIES & MODAL DETAIL
+         */
+        
+        // MODIFIKASI: Fungsi untuk memformat tanggal LENGKAP dengan HARI
+        function formatTanggalLengkap(str) {
+            // Menghilangkan 'T' jika format dari input datetime-local
+            const cleanStr = str.replace('T', ' ');
+            const d = new Date(cleanStr);
+            if(isNaN(d)) return cleanStr;
+            
+            const hari = NAMA_HARI[d.getDay()];
+            const tgl = d.getDate();
+            const bln = d.toLocaleString('id-ID', { month: 'short' });
+            const thn = d.getFullYear();
+            const jam = d.getHours().toString().padStart(2, '0');
+            const mnt = d.getMinutes().toString().padStart(2, '0');
+            
+            return `${hari}, ${tgl} ${bln} ${thn} - ${jam}:${mnt}`;
+            //return hari + ', ' + tanggal + ' <span class="text-[10px] text-slate-400 font-bold block">' + jam + '</span>';
+        }
+
+        function viewDetailModal(row, isAdmin) {
+            var sessions = [];
+            try { sessions = JSON.parse(row.sessionsraw || "[]"); } catch(e) { sessions = []; }
+
+            var waLink = 'https://wa.me/' + row.nohp + '?text=' + encodeURIComponent('Halo ' + row.namapeminjam + '. Ijinkan kami melakukan follow-up atas reservasi anda untuk kegiatan: ' + row.kegiatan);
+            var qrCodeUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent(waLink);
+
+            var contactSection = "";
+            if (isAdmin) {
+                contactSection = 
+                    '<div class="flex flex-col md:flex-row gap-6 mb-6 bg-blue-50 p-5 rounded-3xl border border-blue-100">' +
+                        '<div class="flex-1">' +
+                            '<label class="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Informasi Peminjam</label>' +
+                            '<div class="font-black text-xl text-blue-900 mt-1">' + row.namapeminjam + '</div>' +
+                            '<div class="text-sm font-bold text-blue-700 mb-4">' + row.kegiatan + '</div>' +
+                            '<div class="flex flex-col gap-2 mt-2">' +
+                                '<div class="text-xs font-bold text-slate-500 uppercase">Kontak WhatsApp:</div>' +
+                                '<a href="' + waLink + '" target="_blank" class="inline-flex items-center gap-2 bg-emerald-500 text-white px-4 py-3 rounded-2xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-100">' +
+                                    '<i class="fab fa-whatsapp text-lg"></i> Hubungi via WhatsApp' +
+                                '</a>' +
+                                '<div class="text-[10px] text-emerald-600 font-bold mt-1 ml-1"><i class="fas fa-phone mr-1"></i> +' + row.nohp + '</div>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="flex flex-col items-center justify-center bg-white p-3 rounded-2xl shadow-sm border border-blue-100">' +
+                            '<img src="' + qrCodeUrl + '" alt="QR WhatsApp" class="w-32 h-32 mb-2">' +
+                            '<span class="text-[9px] font-bold text-slate-400 uppercase">Scan to Chat</span>' +
+                        '</div>' +
+                    '</div>';
+            } else {
+                contactSection = 
+                    '<div class="mb-6 bg-slate-50 p-5 rounded-3xl border border-slate-100">' +
+                        '<label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Informasi Peminjam</label>' +
+                        '<div class="font-black text-xl text-slate-800 mt-1">' + row.namapeminjam + '</div>' +
+                        '<div class="text-sm font-bold text-blue-600 mb-2 uppercase">' + row.kegiatan + '</div>' +
+                        '<div class="text-[10px] text-slate-400 font-bold">Kontak tidak ditampilkan demi privasi pemohon.</div>' +
+                    '</div>';
+            }
+
+            var sessionHtml = sessions.map(function(s, idx) {
+                return '<div class="p-5 rounded-3xl border border-slate-100 bg-white shadow-sm">' +
+                        '<div class="flex justify-between items-start mb-3">' +
+                            '<div>' +
+                                '<span class="text-[10px] font-black bg-blue-600 text-white px-3 py-1 rounded-full uppercase mr-2">Sesi ' + (idx+1) + '</span>' +
+                                '<span class="text-sm font-bold text-slate-800">' + s.kategori + '</span>' +
+                            '</div>' +
+                            '<div class="text-[10px] font-bold text-slate-700 bg-amber-100 border border-amber-100 px-2 py-1 rounded-lg">Durasi: ' + (s.lama || '-') + '</div>' +
+                        '</div>' +
+                        '<div class="grid grid-cols-2 gap-4 text-xs">' +
+                            '<div class="bg-slate-50 p-3 rounded-2xl">' +
+                                '<span class="text-slate-400 block text-[9px] font-bold uppercase mb-1">Ruangan</span>' +
+                                '<b class="text-slate-700">' + s.ruangan + '</b>' +
+                            '</div>' +
+                            '<div class="bg-slate-50 p-3 rounded-2xl">' +
+                                '<span class="text-slate-400 block text-[9px] font-bold uppercase mb-1">Waktu</span>' +
+                                '<b class="text-slate-700">' + (s.waktu ? formatTanggalLengkap(s.waktu) : '-') + '</b>' +
+                            '</div>' +
+                        '</div>' +
+                        (s.peralatan ? 
+                        '<div class="mt-3 bg-amber-50 p-3 rounded-2xl border border-amber-100 whitespace-pre-line">' +
+                            '<span class="text-amber-600 block text-[9px] font-bold uppercase mb-1">Peralatan:</span>' +
+                            '<p class="text-[11px] text-amber-800 italic">' + s.peralatan + '</p>' +
+                        '</div>' : '') +
+                    '</div>';
+            }).join('');
+
+            Swal.fire({
+                title: `<div class="flex justify-between items-center pr-10">
+                            <span>Rincian Peminjaman</span>
+                            ${isAdmin ? `<button onclick='printDetail(${JSON.stringify(row)})' class="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-2 transition-all"><i class="fas fa-print"></i> CETAK</button>` : ''}
+                        </div>`,
+                width: '650px',
+                html: 
+                    '<div class="text-left mt-2 max-h-[75vh] overflow-y-auto pr-2 custom-scrollbar">' +
+                        contactSection +
+                        '<div class="space-y-4">' +
+                            '<h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Jadwal Sesi</h4>' +
+                            sessionHtml +
+                        '</div>' +
+                    '</div>',
+                showCloseButton: true,
+                showConfirmButton: false,
+                customClass: { popup: 'rounded-3xl' }
+            });
+        }
+
+        // FUNGSI CETAK BARU
+        function printDetail(row) {
+            let sessions = [];
+            try { sessions = JSON.parse(row.sessionsraw || "[]"); } catch(e) { sessions = []; }
+            
+            const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://wa.me/" + row.nohp;
+            const printWindow = window.open('', '_blank');
+            const sessionRows = sessions.map((s, i) => `
+                <tr>
+                    <td style="border:1px solid #ddd; padding:10px; text-align:center;">${i+1}</td>
+                    <td style="border:1px solid #ddd; padding:10px;"><strong>${s.kategori}</strong><br><small>${s.ruangan}</small></td>
+                    <td style="border:1px solid #ddd; padding:10px;">${formatTanggalLengkap(s.waktu)}</td>
+                    <td style="border:1px solid #ddd; padding:10px;">${s.lama}</td>
+                    <td style="border:1px solid #ddd; padding:10px; white-space: pre-line; font-size: 10px;">${s.peralatan}</td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <html>
+                <head>
+                    <title>Cetak Peminjaman - ${row.namapeminjam}</title>
+                    <style>
+                        body { font-family: sans-serif; padding: 40px; color: #333; line-height: 1.6; }
+                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+                        .header h1 { margin: 0; font-size: 24px; text-transform: uppercase; }
+                        .header p { margin: 5px 0 0; font-size: 12px; color: #666; }
+                        
+                        /* Container Atas: Info Kiri, QR Kanan */
+                        .top-layout { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; gap: 20px; }
+                        .info-table { flex: 1; border-collapse: collapse; }
+                        .info-table td { padding: 5px 0; vertical-align: middle; }
+                        .info-table td:first-child { width: 140px; font-weight: bold; color: #666; font-size: 11px; text-transform: uppercase; }
+                        
+                        .qr-container { width: 130px; text-align: center; border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; }
+                        .qr-container img { width: 100px; height: 100px; }
+                        .qr-container small { display: block; font-size: 8px; color: #777; margin-top: 8px; font-weight: bold; text-transform: uppercase; line-height: 1.2; }
+
+                        .session-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                        .session-table th { background: #f4f4f4; border: 1px solid #ddd; padding: 10px; text-align: left; font-size: 12px; }
+                        
+                        .footer { margin-top: 60px; display: flex; justify-content: space-between; }
+                        .signature { text-align: center; width: 220px; }
+                        .signature p { margin-bottom: 80px; font-size: 12px; }
+                        .signature b { border-top: 1px solid #333; display: block; padding-top: 5px; font-size: 13px; }
+
+                        @media print { .no-print { display: none; } 
+                        body { padding: 20px; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <h1>TANDA TERIMA PEMINJAMAN RUANGAN</h1>
+                        <p>Sistem Reservasi & Manajemen Ruangan - GKT Jemaat 3</p>
+                    </div>
+                    
+                    <div class="top-layout">
+                        <!-- Tabel Informasi -->
+                        <table class="info-table">
+                            <tr><td>No. Referensi</td><td>: #${row.id || Date.now().toString().slice(-6)}</td></tr>
+                            <tr><td>Tgl. Pengajuan</td><td>: ${formatTanggalDaftar(row.timestamp)}</td></tr>
+                            <tr><td>Nama Peminjam</td><td>: <b>${row.namapeminjam}</b></td></tr>
+                            <tr><td>No. WhatsApp</td><td>: +${row.nohp}</td></tr>
+                            <tr><td>Nama Kegiatan</td><td>: <span style="text-transform:uppercase; font-weight:bold;">${row.kegiatan}</span></td></tr>
+                        </table>
+
+                        <!-- QR Code di Sisi Kanan Atas -->
+                        <div class="qr-container">
+                            <img src="${qrUrl}" alt="QR WhatsApp">
+                            <small>Scan QR untuk<br>Hubungi Peminjam</small>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size: 13px; border-left: 4px solid #2563eb; padding-left: 10px; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 1px;">Rincian Jadwal Sesi</h3>
+                    <table class="session-table">
+                        <thead>
+                            <tr>
+                                <th>No</th>
+                                <th>Sesi & Ruangan</th>
+                                <th>Waktu Pelaksanaan</th>
+                                <th>Durasi</th>
+                                <th>Peralatan/Catatan</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${sessionRows}
+                        </tbody>
+                    </table>
+
+                    <div class="footer">
+                        <div class="signature">
+                            <p>Peminjam,</p>
+                            <b>${row.namapeminjam}</b>
+                        </div>
+                        <div class="signature">
+                            <p>Petugas Administrasi,</p>
+                            <b>( ............................ )</b>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 60px; font-size: 9px; color: #aaa; text-align: center; font-style: italic; border-top: 1px solid #eee; padding-top: 10px;">
+                        Dokumen ini dihasilkan secara otomatis oleh Sistem Reservasi Manajemen Ruangan - GKT Jemaat 3 pada ${new Date().toLocaleString('id-ID')}
+                    </div>
+
+                    <script>
+                        window.onload = function() { 
+                            setTimeout(function() {
+                                window.print();
+                            }, 500);
+                        };
+                    <\/script>
+                </body>
+                </html>
+            `;
+            printWindow.document.write(content);
+            printWindow.document.close();
+        }
+
+        function getFilteredAdminData() {
+            var filtered = allData.slice();
+            var now = new Date();
+
+            if (adminFilter !== 'all') {
+                filtered = filtered.filter(function(row) {
+                    var ts = new Date(row.timestamp.replace(' ', 'T'));
+                    if (isNaN(ts.getTime())) return true;
+                    if (adminFilter === 'today') return ts.toDateString() === now.toDateString();
+                    if (adminFilter === 'week') {
+                        var diffDays = Math.ceil(Math.abs(now - ts) / (1000 * 60 * 60 * 24));
+                        return diffDays <= 7;
+                    }
+                    if (adminFilter === 'month') return ts.getMonth() === now.getMonth() && ts.getFullYear() === now.getFullYear();
+                    return true;
+                });
+            }
+
+            if (adminSearch) {
+                var q = adminSearch.toLowerCase();
+                filtered = filtered.filter(function(d) {
+                    return (d.namapeminjam.toLowerCase().indexOf(q) !== -1 || 
+                            d.kegiatan.toLowerCase().indexOf(q) !== -1 || 
+                            d.ruangan.toLowerCase().indexOf(q) !== -1);
+                });
+            }
+            return filtered;
+        }
+
+        function setAdminFilter(f) { adminFilter = f; currentPage = 1; renderAdminDashboard(); }
+        function setAdminSearch(v) { adminSearch = v; currentPage = 1; var body = document.getElementById('adminTableBody'); if(body) body.innerHTML = renderAdminRows(); renderPagination(); }
+        function changePage(p) { currentPage = p; var body = document.getElementById('adminTableBody'); if(body) body.innerHTML = renderAdminRows(); renderPagination(); }
+
+        function renderPagination() {
+            var count = getFilteredAdminData().length;
+            var total = Math.ceil(count / itemsPerPage);
+            var container = document.getElementById('paginationContainer');
+            if(!container) return;
+
+            container.innerHTML = 
+                '<span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total: ' + count + ' Permohonan</span>' +
+                '<div class="flex gap-2">' +
+                    '<button onclick="changePage('+(currentPage-1)+')" '+(currentPage===1?'disabled':'')+' class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold disabled:opacity-30">PREV</button>' +
+                    '<div class="px-4 py-2 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold">Hal ' + currentPage + ' dari ' + (total || 1) + '</div>' +
+                    '<button onclick="changePage('+(currentPage+1)+')" '+(currentPage>=total?'disabled':'')+' class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold disabled:opacity-30">NEXT</button>' +
+                '</div>';
+        }
+
+        function renderPublicStatusView() {
+            var recentData = allData.slice(0, 20);
+            document.getElementById('appView').innerHTML = 
+                '<div class="space-y-6 animate-fade-in">' +
+                    '<div class="flex flex-col md:flex-row justify-between items-center gap-4">' +
+                        '<h2 class="text-2xl font-bold text-slate-800">Histori Permohonan</h2>' +
+                        '<div class="relative w-full md:w-80">' +
+                            '<i class="fas fa-search absolute left-3 top-3.5 text-slate-400 text-sm"></i>' +
+                            '<input type="text" onkeyup="filterPublicStatus(this.value)" placeholder="Cari pemohon atau kegiatan..." class="w-full pl-10 pr-4 py-3 border rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white shadow-sm border-slate-200">' +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">' +
+                        '<div class="overflow-x-auto">' +
+                            '<table class="w-full text-left border-collapse min-w-[600px]">' +
+                                '<thead class="bg-slate-50 border-b">' +
+                                    '<tr>' +
+                                        '<th class="p-5 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Waktu Daftar</th>' +
+                                        '<th class="p-5 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Pemohon</th>' +
+                                        '<th class="p-5 text-[11px] font-bold text-slate-400 uppercase tracking-widest">Kegiatan</th>' +
+                                        '<th class="p-5 text-center text-[11px] font-bold text-slate-400 uppercase tracking-widest w-24">Opsi</th>' +
+                                    '</tr>' +
+                                '</thead>' +
+                                '<tbody id="publicStatusTableBody">' + renderPublicTableRows(recentData) + '</tbody>' +
+                            '</table>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+        }
+
+        function renderPublicTableRows(dataList) {
+            if (dataList.length === 0) return '<tr><td colspan="4" class="p-20 text-center text-slate-400 italic">Tidak ada data.</td></tr>';
+            return dataList.map(function(row) {
+                return '<tr class="border-b text-sm hover:bg-slate-50/50 transition-colors">' +
+                    '<td class="p-5">' +
+                        '<div class="font-bold text-slate-700 whitespace-nowrap">' + formatTanggalDaftar(row.timestamp) + '</div>' +
+                    '</td>' +
+                    '<td class="p-5"><div class="font-bold text-slate-800">' + row.namapeminjam + '</div></td>' +
+                    '<td class="p-5"><div class="text-blue-600 font-bold uppercase text-xs line-clamp-1">' + row.kegiatan + '</div></td>' +
+                    '<td class="p-5 text-center">' +
+                        '<button onclick=\'viewDetailModal(' + JSON.stringify(row) + ', false)\' class="bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all shadow-sm">DETAIL</button>' +
+                    '</td>' +
+                '</tr>';
+            }).join('');
+        }
+
+        function filterPublicStatus(q) {
+            var query = q.toLowerCase();
+            var filtered = allData.filter(function(d) {
+                return d.namapeminjam.toLowerCase().indexOf(query) !== -1 || d.kegiatan.toLowerCase().indexOf(query) !== -1;
+            });
+            var body = document.getElementById('publicStatusTableBody');
+            if(body) body.innerHTML = renderPublicTableRows(filtered.slice(0, 20));
+        }
+
+        function handleFormSubmit(e) {
+            e.preventDefault();
+            var formDataRaw = new FormData(e.target);
+            var data = {};
+            formDataRaw.forEach(function(value, key){ data[key] = value; });
+
+            // Validasi ulang H+3 di sisi JS sebagai pengaman tambahan
+            const now = new Date();
+            const minAllowed = new Date(now.setDate(now.getDate() + 3)).setHours(0,0,0,0);
+            
+            var sessions = [];
+            for (var i = 1; i <= sessionCount; i++) {
+                if (data['session_kategori_' + i]) {
+                    const chosenDate = new Date(data['session_waktu_' + i]).getTime();
+                    if(chosenDate < minAllowed) {
+                        Swal.fire('Gagal', 'Pemesanan minimal dilakukan 3 hari sebelum kegiatan (H+3).', 'error');
+                        return;
+                    }
+
+                    sessions.push({
+                        kategori: data['session_kategori_' + i],
+                        ruangan: data['session_ruangan_' + i],
+                        waktu: data['session_waktu_' + i],
+                        lama: data['session_lama_' + i] + " Jam",
+                        peralatan: data['session_peralatan_' + i] || ""
+                    });
+                }
+            }
+
+            var uniqueRooms = [];
+            sessions.forEach(function(s) {
+                if(uniqueRooms.indexOf(s.ruangan) === -1) uniqueRooms.push(s.ruangan);
+            });
+
+            var payload = {
+                nama: data.nama,
+                nohp: data.nohp.indexOf('0') === 0 ? '62' + data.nohp.substring(1) : (data.nohp.indexOf('62') === 0 ? data.nohp : '62' + data.nohp),
+                kegiatan: data.kegiatan,
+                ruangan: uniqueRooms.join(", "),
+                sessionsRaw: JSON.stringify(sessions)
+            };
+
+            startLoading('Mengirim...');
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(res) {
+                    endLoading();
+                    Swal.fire({ title: 'Berhasil!', text: 'Permohonan Anda telah terkirim.', icon: 'success', customClass: { popup: 'rounded-3xl' }});
+                    navigateTo('public_status');
+                }).submitPermohonan(payload);
+            } else {
+                setTimeout(function() {
+                    var now = new Date();
+                    var dt = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + now.toTimeString().split(' ')[0];
+                    allData.unshift({ id: Date.now(), timestamp: dt, namapeminjam: payload.nama, nohp: payload.nohp, kegiatan: payload.kegiatan, ruangan: payload.ruangan, sessionsraw: payload.sessionsRaw });
+                    endLoading();
+                    navigateTo('public_status');
+                }, 800);
+            }
+        }
+
+        function handleLogin(e) {
+            e.preventDefault();
+            var userVal = document.getElementById('username').value;
+            var passVal = document.getElementById('password').value;
+            startLoading('Memverifikasi...');
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(response) {
+                    endLoading();
+                    if (response.success) {
+                        user = response.user;
+                        localStorage.setItem('simru_session', JSON.stringify(user));
+                        navigateTo('admin_dashboard');
+                    } else { Swal.fire('Gagal', response.message, 'error'); }
+                }).checkLogin(userVal, passVal);
+            } else {
+                endLoading();
+                if(userVal === 'admin') {
+                    user = {nama: 'Admin Offline'};
+                    localStorage.setItem('simru_session', JSON.stringify(user));
+                    navigateTo('admin_dashboard');
+                }
+            }
+        }
+        function handleLogout() { localStorage.removeItem('simru_session'); user = null; navigateTo('form'); }
+
+        function renderPublicNav() {
+            var links = document.getElementById('navLinks');
+            if(!links) return;
+            links.innerHTML = 
+                '<button onclick="navigateTo(\'form\')" class="px-4 py-2 rounded-xl font-bold ' + (view==='form'?'active-nav text-blue-600':'text-slate-500') + '">Form</button>' +
+                '<button onclick="navigateTo(\'public_status\')" class="px-4 py-2 rounded-xl font-bold ' + (view==='public_status'?'active-nav text-blue-600':'text-slate-500') + '">Histori</button>' +
+                '<button onclick="navigateTo(\'login\')" class="px-4 py-2 rounded-xl text-slate-500 font-bold">Admin</button>';
+        }
+
+        function renderAdminNav() {
+            var links = document.getElementById('navLinks');
+            if(!links) return;
+            links.innerHTML = 
+                '<button onclick="navigateTo(\'admin_dashboard\')" class="px-4 py-2 rounded-xl font-bold ' + (view==='admin_dashboard'||view==='admin_rooms'?'active-nav text-blue-600':'text-slate-500') + '">Dashboard</button>' +
+                '<button onclick="handleLogout()" class="px-4 py-2 rounded-xl text-red-500 font-bold">Keluar</button>';
+        }
+
+        function renderLoginView() {
+            document.getElementById('appView').innerHTML = 
+                '<div class="max-w-md mx-auto bg-white p-8 rounded-3xl shadow-xl mt-10 animate-fade-in">' +
+                    '<h2 class="text-2xl font-bold text-center mb-6">Admin Login</h2>' +
+                    '<form onsubmit="handleLogin(event)" class="space-y-4">' +
+                        '<input type="text" id="username" class="w-full p-4 border rounded-xl outline-none" placeholder="Username (admin)">' +
+                        '<input type="password" id="password" class="w-full p-4 border rounded-xl outline-none" placeholder="Password">' +
+                        '<button type="submit" class="w-full bg-blue-600 text-white font-bold p-4 rounded-xl">MASUK</button>' +
+                    '</form>' +
+                '</div>';
+        }
+
+        function renderRoomManagement() {
+            var roomHtml = daftarRuangan.map(function(r, i) {
+                return '<div class="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">' +
+                        '<span class="font-bold">' + r + '</span>' +
+                        '<button onclick="deleteRoom(' + i + ')" class="text-red-400 hover:text-red-600"><i class="fas fa-trash"></i></button>' +
+                    '</div>';
+            }).join('');
+
+            document.getElementById('appView').innerHTML = 
+                '<div class="max-w-2xl mx-auto space-y-6 animate-fade-in">' +
+                    '<div class="flex items-center justify-between">' +
+                        '<button onclick="navigateTo(\'admin_dashboard\')" class="text-slate-500 font-bold text-sm">' +
+                            '<i class="fas fa-arrow-left mr-1"></i> Dashboard' +
+                        '</button>' +
+                        '<h2 class="text-xl font-bold text-slate-800">Kelola Ruangan</h2>' +
+                    '</div>' +
+                    '<div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">' +
+                        '<div class="flex gap-2 mb-6">' +
+                            '<input type="text" id="newRoomName" class="flex-1 p-3 border rounded-xl outline-none" placeholder="Nama ruangan baru...">' +
+                            '<button onclick="addRoom()" class="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold">TAMBAH</button>' +
+                        '</div>' +
+                        '<div id="roomList" class="space-y-2">' + roomHtml + '</div>' +
+                    '</div>' +
+                '</div>';
+        }
+
+        function addRoom() { 
+            var input = document.getElementById('newRoomName');
+            var n = input ? input.value.trim() : ""; 
+            if(n) { daftarRuangan.push(n); saveRooms(); renderRoomManagement(); } 
+        }
+        function deleteRoom(i) { daftarRuangan.splice(i, 1); saveRooms(); renderRoomManagement(); }
+        function saveRooms() { localStorage.setItem('simru_rooms', JSON.stringify(daftarRuangan)); if(typeof google !== 'undefined') google.script.run.addRuangan(daftarRuangan); }
+
+        function startLoading(text) { 
+            var elText = document.getElementById('loadingText');
+            var elOverlay = document.getElementById('loadingOverlay');
+            if(elText) elText.innerText = text; 
+            if(elOverlay) elOverlay.style.display = 'flex'; 
+        }
+        function endLoading() { 
+            var elOverlay = document.getElementById('loadingOverlay');
+            if(elOverlay) elOverlay.style.display = 'none'; 
+        }
+
+        function generateMockData() {
+            allData = [
+                { id: 1, timestamp: '2026-02-23 10:15:00', namapeminjam: 'Budi Santoso', nohp: '62812345678', kegiatan: 'Rapat Tahunan', ruangan: 'Aula Utama', sessionsraw: JSON.stringify([{kategori: 'Puncak Acara', ruangan: 'Aula Utama', waktu: '2026-02-23T10:15', lama: '2 Jam', peralatan: 'Sound system, 2 Wireless mic'}]) },
+                { id: 2, timestamp: '2026-02-22 14:00:00', namapeminjam: 'Siska Amelia', nohp: '62899887766', kegiatan: 'Latihan Padus', ruangan: 'Gedung Serbaguna', sessionsraw: JSON.stringify([{kategori: 'Sesi Latihan', ruangan: 'Gedung Serbaguna', waktu: '2026-02-22T14:00', lama: '3 Jam', peralatan: ''}]) }
+            ];
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>
