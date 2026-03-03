@@ -85,6 +85,14 @@
 
     <script>
         /**
+         * 1. KONFIGURASI INTEGRASI (PENTING UNTUK VERCEL)
+         * Masukkan URL Web App dari Google Apps Script Anda di sini.
+         * URL ini didapat setelah Anda klik 'Deploy' -> 'New Deployment' -> 'Web App'
+         */
+        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyoknt4tEDRVG4VfpI_ER4vFjggjyUb6QNxLgWscDvRoHVm5tPH92UhOg9BRy_qrle9/exec";
+
+
+        /**
          * STATE MANAGEMENT
          */
         var user = null;
@@ -102,8 +110,34 @@
         var NAMA_HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
         /**
-         * UTILITY FUNCTIONS
+         * UTILITY FUNCTIONS UNTUK VERCEL
          */
+        async function callGAS(action, payload = {}) {
+            if (WEB_APP_URL === "https://script.google.com/macros/s/AKfycbyoknt4tEDRVG4VfpI_ER4vFjggjyUb6QNxLgWscDvRoHVm5tPH92UhOg9BRy_qrle9/exec") {
+                console.warn("URL Web App belum diatur. Menjalankan mode demo.");
+                return null;
+            }
+            try {
+                const response = await fetch(WEB_APP_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', // Penting untuk GAS
+                    cache: 'no-cache',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: action, payload: payload })
+                });
+                // Karena 'no-cors', kita tidak bisa baca response langsung secara detail jika GAS tidak diatur benar.
+                // Namun untuk Vercel ke GAS, biasanya kita asumsikan berhasil atau gunakan cara Redirect.
+                // Untuk hasil data (GET), kita tetap butuh fetch normal jika CORS diizinkan di Code.gs.
+                
+                const res = await fetch(WEB_APP_URL + "?action=" + action);
+                return await res.json();
+            } catch (err) {
+                console.error("Error calling GAS:", err);
+                return null;
+            }
+        }
+
+
         function formatWaktuDaftar(dateStr) {
             var dt = new Date(dateStr.replace(' ', 'T'));
             if (isNaN(dt.getTime())) return dateStr;
@@ -148,7 +182,16 @@
                     checkLoginState();
                     endLoading();
                 }).getRuangan();
-            } else {
+            } else if (WEB_APP_URL !== "https://script.google.com/macros/s/AKfycbyoknt4tEDRVG4VfpI_ER4vFjggjyUb6QNxLgWscDvRoHVm5tPH92UhOg9BRy_qrle9/exec") {
+                // Jalur Vercel
+                fetch(WEB_APP_URL + "?action=get_ruangan")
+                    .then(res => res.json())
+                    .then(rooms => {
+                        if(rooms) daftarRuangan = rooms;
+                        checkLoginState();
+                        endLoading();
+                    }).catch(() => { generateMockData(); checkLoginState(); endLoading(); }); 
+            else {
                 generateMockData();
                 setTimeout(function() { checkLoginState(); endLoading(); }, 800);
             }
@@ -185,6 +228,14 @@
                     renderPublicStatusView();
                     endLoading();
                 }).getDataAdmin();
+            } else if (WEB_APP_URL !== "https://script.google.com/macros/s/AKfycbyoknt4tEDRVG4VfpI_ER4vFjggjyUb6QNxLgWscDvRoHVm5tPH92UhOg9BRy_qrle9/exec") {
+                 fetch(WEB_APP_URL + "?action=get_data")
+                    .then(res => res.json())
+                    .then(res => {
+                        allData = res.data || [];
+                        renderPublicStatusView();
+                        endLoading();
+                    });
             } else { renderPublicStatusView(); endLoading(); }
         }
 
@@ -197,6 +248,15 @@
                     renderAdminDashboard();
                     endLoading();
                 }).getDataAdmin();
+            } else if (WEB_APP_URL !== "https://script.google.com/macros/s/AKfycbyoknt4tEDRVG4VfpI_ER4vFjggjyUb6QNxLgWscDvRoHVm5tPH92UhOg9BRy_qrle9/exec") {
+                 fetch(WEB_APP_URL + "?action=get_data")
+                    .then(res => res.json())
+                    .then(res => {
+                        allData = res.data || [];
+                        dashboardStats = res.stats || { today: 0, week: 0, month: 0 };
+                        renderAdminDashboard();
+                        endLoading();
+                    });
             } else { 
                 dashboardStats = { today: 1, week: 1, month: 1 };
                 renderAdminDashboard(); 
@@ -800,6 +860,15 @@
                     Swal.fire({ title: 'Berhasil!', text: 'Permohonan Anda telah terkirim.', icon: 'success', customClass: { popup: 'rounded-3xl' }});
                     navigateTo('public_status');
                 }).submitPermohonan(payload);
+            } else if (WEB_APP_URL !== "https://script.google.com/macros/s/AKfycbyoknt4tEDRVG4VfpI_ER4vFjggjyUb6QNxLgWscDvRoHVm5tPH92UhOg9BRy_qrle9/exec") {
+                 fetch(WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "submit", payload: payload })
+                }).then(() => {
+                    endLoading();
+                    Swal.fire({ title: 'Berhasil!', text: 'Permohonan Anda telah terkirim.', icon: 'success', customClass: { popup: 'rounded-3xl' }});
+                    navigateTo('public_status');
+                });
             } else {
                 setTimeout(function() {
                     var now = new Date();
@@ -897,7 +966,18 @@
             if(n) { daftarRuangan.push(n); saveRooms(); renderRoomManagement(); } 
         }
         function deleteRoom(i) { daftarRuangan.splice(i, 1); saveRooms(); renderRoomManagement(); }
-        function saveRooms() { localStorage.setItem('simru_rooms', JSON.stringify(daftarRuangan)); if(typeof google !== 'undefined') google.script.run.addRuangan(daftarRuangan); }
+
+        function saveRooms() { 
+            localStorage.setItem('simru_rooms', JSON.stringify(daftarRuangan)); 
+            if(typeof google !== 'undefined') {
+                google.script.run.addRuangan(daftarRuangan);
+            } else if (WEB_APP_URL !== "https://script.google.com/macros/s/AKfycbyoknt4tEDRVG4VfpI_ER4vFjggjyUb6QNxLgWscDvRoHVm5tPH92UhOg9BRy_qrle9/exec") {
+                fetch(WEB_APP_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "add_ruangan", payload: daftarRuangan })
+                });
+            }
+        }
 
         function startLoading(text) { 
             var elText = document.getElementById('loadingText');
