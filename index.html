@@ -191,7 +191,7 @@
                         checkLoginState();
                         endLoading();
                     }).catch(() => { generateMockData(); checkLoginState(); endLoading(); }); 
-            else {
+            } else {
                 generateMockData();
                 setTimeout(function() { checkLoginState(); endLoading(); }, 800);
             }
